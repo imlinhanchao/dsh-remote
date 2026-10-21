@@ -49,12 +49,29 @@ export function PendingCenter({ t }: PendingCenterProps) {
     try {
       const next = await listPending()
       setItems(previous => sameItems(previous, next) ? previous : next)
-      if (next.length === 0) setOpen(false)
+      // Do not auto-close an explicitly opened sheet: a notification click
+      // for an item that expired should still explain why it is empty.
     } catch {
       // A transient transport failure is not actionable here; the next poll
       // retries. A 401 means the page is no longer paired and the official
       // fence notice owns the explanation.
     }
+  }, [])
+
+  // Opening the app means the user is looking at the list; stale system
+  // notifications for already-answered or expired items must not linger and
+  // send them into an empty sheet later.
+  useEffect(() => {
+    const clear = (): void => {
+      void navigator.serviceWorker.getRegistration()
+        .then(registration => registration?.getNotifications())
+        .then(list => { for (const notification of list ?? []) notification.close() })
+        .catch(() => undefined)
+    }
+    clear()
+    const onVisible = (): void => { if (document.visibilityState === 'visible') clear() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { document.removeEventListener('visibilitychange', onVisible) }
   }, [])
 
   // Home-screen badge where the browser supports the Badging API.
@@ -139,6 +156,7 @@ export function PendingCenter({ t }: PendingCenterProps) {
       })
       await answerPending(item.id, answers)
       setItems(previous => previous.filter(entry => entry.id !== item.id))
+      if (items.length <= 1) setOpen(false)
       setSelection(previous => { const next = { ...previous }; delete next[item.id]; return next })
       setCustoms(previous => { const next = { ...previous }; delete next[item.id]; return next })
       await load()
@@ -156,6 +174,7 @@ export function PendingCenter({ t }: PendingCenterProps) {
     try {
       await decidePending(item.id, decision)
       setItems(previous => previous.filter(entry => entry.id !== item.id))
+      if (items.length <= 1) setOpen(false)
       await load()
     } catch (cause) {
       setError(failure(cause))
@@ -165,7 +184,7 @@ export function PendingCenter({ t }: PendingCenterProps) {
     }
   }
 
-  if (items.length === 0) return null
+  if (items.length === 0 && !open) return null
 
   const primary = {
     appearance: 'none' as const,
@@ -256,6 +275,9 @@ export function PendingCenter({ t }: PendingCenterProps) {
             </div>
             {error !== undefined && (
               <div role="alert" style={{ fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-secondary)' }}>{error}</div>
+            )}
+            {items.length === 0 && (
+              <div style={{ fontSize: 13, lineHeight: '20px', opacity: 0.8 }}>{t('pending.stale')}</div>
             )}
             {items.map(item => (
               <div
