@@ -192,6 +192,17 @@ describe('reopen service worker script', () => {
     expect(show.mock.calls[0]?.[1]).toMatchObject({ body: '需要你选择', tag: 'q:1', data: { url: '/' } })
   })
 
+  it('routes an old question notification to the pending sheet', async () => {
+    const { listeners, self } = makeScope()
+    const waits: Promise<unknown>[] = []
+    listeners.notificationclick({
+      notification: { close: vi.fn(), data: { url: '/', kind: 'question' } },
+      waitUntil: (promise: Promise<unknown>) => { waits.push(promise) },
+    } as never)
+    await Promise.all(waits)
+    expect(self.clients.openWindow).toHaveBeenCalledWith('/?pending=1')
+  })
+
   it('opens the app root when a notification is clicked', async () => {
     const { listeners, self } = makeScope()
     const waits: Promise<unknown>[] = []

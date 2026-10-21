@@ -447,7 +447,12 @@ self.addEventListener('push', function (event) {
 });
 self.addEventListener('notificationclick', function (event) {
   event.notification.close();
-  var target = event.notification.data && typeof event.notification.data.url === 'string' ? event.notification.data.url : '/';
+  var data = event.notification.data || {};
+  var target = typeof data.url === 'string' ? data.url : '/';
+  // Older payloads carried url '/' only; their data.kind still identifies a
+  // question/approval, so route them to the pending sheet instead of an
+  // empty root page.
+  if ((data.kind === 'question' || data.kind === 'approval') && target === '/') target = '/?pending=1';
   event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (clients) {
     for (var i = 0; i < clients.length; i += 1) {
       var client = clients[i];
