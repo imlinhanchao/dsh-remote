@@ -1,0 +1,15 @@
+dsh-remote
+Copyright 2026 imlinhanchao
+
+This repository is a fork of @linxin666/dsh-remote-web-ui 0.4.8, originally
+developed by zhu1090093659 in https://github.com/zhu1090093659/dsh-web and
+licensed under the Apache License, Version 2.0.
+
+The upstream pairing flow, one-time token and device-session model, the gated
+/remote channel, the official-UI mobile adaptation layer, the LAN-binding
+design, and the tunnel/relay design are the original author's work. This fork
+adds Web Push notifications, a persistent pending-interaction broker, an
+installable PWA shell, and a UI-configurable remote host list.
+
+The Apache License, Version 2.0 text is retained in LICENSE. See the
+"Origin and acknowledgements" section of README.md for links and details.

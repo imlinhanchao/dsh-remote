@@ -1,0 +1,9 @@
+lib/
+node_modules/
+*.tsbuildinfo
+.pnpm-home/
+.xdg-cache/
+.xdg-data/
+.xdg-state/
+.npm-cache/
+*.tgz
