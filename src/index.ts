@@ -20,6 +20,7 @@ import type {} from '@deepseek-ai/dsh-commands'
 // Type-only: pulls the host-side Context merge (ctx.connection, whose
 // authenticatedUrl the /pair-accept redirect consumes).
 import type {} from '@deepseek-ai/dsh-client-connection'
+import type {} from '@deepseek-ai/dsh-user-questions'
 import { DEFAULT_IDLE_EXPIRE_MS, PairingService, type PairingConfig } from './pairing.ts'
 import { dshHome } from './dsh-home.ts'
 import { isPairedDeviceRequest, makeGateListener } from './gate.ts'
@@ -560,6 +561,56 @@ function applyImpl(ctx: Context, config?: ResolvedConfigFields): void {
   const pending = new PendingBroker({
     titleOf: sessionId => sessionLabelOf(ctx, sessionId),
     isRoot: sessionId => isRootSession(ctx, sessionId),
+    acknowledge: (agent, callId, answer) => {
+      const questions = ctx.get('userQuestions')
+      return questions?.answer(agent, callId as never, answer) ?? false
+    },
+    resolveCallId: (agent, questions) => {
+      try {
+        const projections = ctx.get('sessionProjections') as unknown as {
+          stateOf(session: unknown, name: string): unknown
+        } | undefined
+        const state = projections?.stateOf(agent.session, 'userQuestions') as {
+          questions?: { active?: Array<{ callId?: string; state?: string; questions?: Array<{ id: string }> }> }
+        } | undefined
+        const ids = new Set(questions.map(question => question.id))
+        const projected = state?.questions?.active?.find(question => (
+          question.state === 'continued'
+          && Array.isArray(question.questions)
+          && question.questions.length === ids.size
+          && question.questions.every(row => ids.has(row.id))
+        ))?.callId
+        if (projected !== undefined) return projected
+        // Legacy ask_user_question requests may omit wait.callId, and the
+        // projection can settle a beat later. The durable tool/call is the
+        // authoritative identity; find the newest unanswered ask_user_question
+        // whose question ids match this request.
+        const events = agent.session.snapshotEvents() as unknown as Array<{
+          type: string
+          data?: { name?: string; callId?: string; arguments?: string; message?: { toolCallId?: string } }
+        }>
+        const answered = new Set(events
+          .filter(event => event.type === 'tool/result')
+          .map(event => event.data?.message?.toolCallId)
+          .filter((id): id is string => typeof id === 'string'))
+        for (let index = events.length - 1; index >= 0; index -= 1) {
+          const event = events[index]
+          if (event?.type !== 'tool/call' || event.data?.name !== 'ask_user_question') continue
+          const callId = event.data.callId
+          if (callId === undefined || answered.has(callId)) continue
+          try {
+            const args = JSON.parse(event.data.arguments ?? '{}') as { questions?: Array<{ id?: string }> }
+            const asked = new Set((args.questions ?? []).map(question => question.id))
+            if (asked.size === ids.size && [...ids].every(id => asked.has(id))) return callId
+          } catch {
+            // Ignore a malformed historical argument blob.
+          }
+        }
+        return undefined
+      } catch {
+        return undefined
+      }
+    },
   })
 
   // ── auto tunnel ─────────────────────────────────────────────────────────

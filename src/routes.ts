@@ -1264,7 +1264,7 @@ export function makeRoutes(deps: PairRoutesDeps): WebRoute[] {
       writeJson(res, result.code === 'not-found' ? 404 : 400, { ok: false, code: result.code })
       return
     }
-    writeJson(res, 200, { ok: true })
+    writeJson(res, 200, result)
   }
 
   const handlePendingDecision = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {

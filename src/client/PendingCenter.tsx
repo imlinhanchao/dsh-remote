@@ -155,6 +155,7 @@ export function PendingCenter({ t }: PendingCenterProps) {
         return { id: question.id, selected, ...(custom !== undefined && custom !== '' ? { custom } : {}) }
       })
       await answerPending(item.id, answers)
+      window.setTimeout(() => { dismissOfficialQuestionCards(item.questions ?? []) }, 60)
       setItems(previous => previous.filter(entry => entry.id !== item.id))
       if (items.length <= 1) setOpen(false)
       setSelection(previous => { const next = { ...previous }; delete next[item.id]; return next })
@@ -405,4 +406,43 @@ function sameItems(previous: readonly PendingItem[], next: readonly PendingItem[
     const other = next[index]
     return other !== undefined && item.id === other.id && item.createdAt === other.createdAt && item.summary === other.summary
   })
+}
+
+
+/**
+ * Best-effort dismissal of the official question card after the broker has
+ * accepted an answer. The official card is an optimistic client surface keyed
+ * by its own submit handler; a host-side answer closes the tool call but not
+ * that local surface. Find the card by its question text and hide the nearest
+ * card/dialog ancestor. The pending sheet's own DOM is excluded.
+ */
+function dismissOfficialQuestionCards(questions: readonly PendingQuestion[]): void {
+  const texts = questions
+    .flatMap(question => [question.question, question.header])
+    .filter((text): text is string => typeof text === 'string' && text.trim().length > 4)
+  if (texts.length === 0) return
+  const candidates = [...document.querySelectorAll<HTMLElement>('body *')].filter((element) => {
+    if (element.closest('[data-dsh-part]') !== null) return false
+    const content = element.textContent ?? ''
+    return texts.some(text => content.includes(text))
+  })
+  const cards = new Set<HTMLElement>()
+  for (const candidate of candidates) {
+    let node: HTMLElement | null = candidate
+    let fallback: HTMLElement | null = null
+    for (let depth = 0; depth < 8 && node !== null; depth += 1) {
+      const className = typeof node.className === 'string' ? node.className : ''
+      if (node.getAttribute('role') === 'dialog' || /(?:^|[\s_-])(?:card|panel|modal|dialog|sheet|question)/i.test(className)) {
+        cards.add(node)
+        break
+      }
+      if (fallback === null && node.querySelector('button') !== null) fallback = node
+      node = node.parentElement
+    }
+    if (node === null && fallback !== null) cards.add(fallback)
+  }
+  for (const card of cards) {
+    if (card === document.body || card === document.documentElement) continue
+    card.style.display = 'none'
+  }
 }

@@ -41,16 +41,19 @@ function questionRequest(signal?: AbortSignal) {
 /** Build a broker over the fake context. */
 function setup(options: { isRoot?: boolean; timeoutMs?: number } = {}) {
   const { ctx, listeners } = fakeContext()
+  const acknowledge = vi.fn()
   const broker = new PendingBroker({
     titleOf: () => 'Session',
     isRoot: () => options.isRoot ?? true,
     timeoutMs: options.timeoutMs ?? 60_000,
     log: { warn: vi.fn(), error: vi.fn() },
+    acknowledge,
   })
   const dispose = broker.install(ctx, () => true)
   return {
     broker,
     listeners,
+    acknowledge,
     dispose,
     question: listeners.get('user-questions/request') as QuestionListener,
     approval: listeners.get('approval/request') as ApprovalListener,
@@ -59,12 +62,13 @@ function setup(options: { isRoot?: boolean; timeoutMs?: number } = {}) {
 
 describe('PendingBroker', () => {
   it('lets the phone answer first and removes the item', async () => {
-    const { broker, question } = setup()
+    const { broker, question, acknowledge } = setup()
     const desktop = Promise.withResolvers<AskUserQuestionAnswer>()
     const answered = question(questionRequest(), () => desktop.promise)
     const item = broker.list()[0]
     expect(item).toMatchObject({ kind: 'question', callId: 'call-1', title: 'Session' })
     expect(broker.answer(item!.id, [{ id: 'q1', selected: ['A'] }])).toEqual({ ok: true })
+    expect(acknowledge).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }), 'call-1', { answers: [{ id: 'q1', selected: ['A'] }] })
     await expect(answered).resolves.toEqual({ answers: [{ id: 'q1', selected: ['A'] }] })
     expect(broker.list()).toEqual([])
   })

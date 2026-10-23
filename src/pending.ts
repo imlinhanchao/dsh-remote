@@ -12,6 +12,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AskUserQuestionAnswer, AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-approval'
@@ -70,6 +71,8 @@ interface PendingItemBase {
 /** A held question. */
 interface PendingQuestionItem extends PendingItemBase {
   kind: 'question'
+  /** Exact live root agent, used to acknowledge the official UI projection. */
+  agent: Agent
   questions: AskUserQuestionItem[]
   resolve: (answer: AskUserQuestionAnswer) => void
 }
@@ -87,7 +90,7 @@ type PendingItem = PendingQuestionItem | PendingApprovalItem
 
 /** Result of applying a phone answer or decision. */
 export type PendingApplyResult =
-  | { ok: true }
+  | { ok: true; acknowledged?: boolean; reason?: string }
   | { ok: false; code: 'not-found' | 'wrong-kind' | 'bad-answer' | 'expired' }
 
 /** Construction options. */
@@ -100,12 +103,25 @@ export interface PendingBrokerOptions {
   timeoutMs?: number
   /** Failure logger. */
   log?: Pick<Console, 'warn' | 'error'>
+  /**
+   * Settle the official question projection after the phone answers. The
+   * broker's waterfall return already answers the tool, but the official card
+   * is driven by the projection, which only closes through this official
+   * steer path.
+   */
+  acknowledge?: (agent: Agent, callId: string, answer: AskUserQuestionAnswer) => boolean | void
+  /**
+   * Resolve the open callId from the Host projection when the legacy tool
+   * request carries no `wait.callId`. The projection is what the official
+   * answer path keys on, so its callId is the one to acknowledge.
+   */
+  resolveCallId?: (agent: Agent, questions: readonly AskUserQuestionItem[]) => string | undefined
 }
 
 /** A structurally narrowed question request, so this module needs no runtime import. */
 interface QuestionRequestLike {
   questions: AskUserQuestionItem[]
-  agent?: { id: string }
+  agent?: Agent
   signal?: AbortSignal
   wait?: { callId?: string }
 }
@@ -186,9 +202,26 @@ export class PendingBroker {
     if (item === undefined) return { ok: false, code: 'not-found' }
     if (item.kind !== 'question') return { ok: false, code: 'wrong-kind' }
     if (!validAnswers(item.questions, answers)) return { ok: false, code: 'bad-answer' }
+    // Close the official card through the same steer path its own UI uses.
+    // The projection is the card's source of truth; the broker's waterfall
+    // return alone does not mark it answered.
+    const callId = item.callId ?? this.options.resolveCallId?.(item.agent, item.questions)
+    let acknowledged: boolean | undefined
+    let reason: string | undefined
+    if (callId === undefined) {
+      reason = 'no-call-id'
+    } else {
+      try {
+        acknowledged = this.options.acknowledge?.(item.agent, callId, { answers }) === true
+        if (acknowledged !== true) reason = 'not-continued'
+      } catch (error) {
+        // REPLY_QUEUED means the official UI already accepted an answer.
+        reason = error instanceof Error ? error.message : String(error)
+      }
+    }
     this.items.delete(id)
     item.resolve({ answers })
-    return { ok: true }
+    return { ok: true, acknowledged, ...(reason !== undefined ? { reason } : {}) }
   }
 
   /**
@@ -218,11 +251,11 @@ export class PendingBroker {
     next: () => Promise<AskUserQuestionAnswer>,
     enabled: () => boolean,
   ): Promise<AskUserQuestionAnswer> {
-    const sessionId = request.agent?.id
-    if (!enabled() || sessionId === undefined || !this.options.isRoot(sessionId) || this.items.size >= MAX_ITEMS) {
+    const agent = request.agent
+    if (!enabled() || agent === undefined || !this.options.isRoot(agent.id) || this.items.size >= MAX_ITEMS) {
       return next()
     }
-    const item = this.createQuestion(request, sessionId)
+    const item = this.createQuestion(request, agent.id, agent)
     return this.race(item, next, request.signal)
   }
 
@@ -241,7 +274,7 @@ export class PendingBroker {
   }
 
   /** Build and register one question item. */
-  private createQuestion(request: QuestionRequestLike, sessionId: string): PendingQuestionItem {
+  private createQuestion(request: QuestionRequestLike, sessionId: string, agent: Agent): PendingQuestionItem {
     const first = request.questions[0]
     const prompt = [first?.header, first?.question].filter((part): part is string => typeof part === 'string' && part.length > 0).join('：')
     const count = request.questions.length
@@ -251,14 +284,16 @@ export class PendingBroker {
       resolve = resolvePromise
       reject = rejectPromise
     })
+    const callId = request.wait?.callId ?? this.options.resolveCallId?.(agent, request.questions)
     const item: PendingQuestionItem = {
       id: randomUUID(),
       kind: 'question',
       sessionId,
-      ...(request.wait?.callId !== undefined ? { callId: request.wait.callId } : {}),
+      ...(callId !== undefined ? { callId } : {}),
       title: this.options.titleOf(sessionId),
       summary: prompt !== '' ? `${prompt}${count > 1 ? `（共 ${String(count)} 个）` : ''}` : '有一个问题需要你回答',
       createdAt: Date.now(),
+      agent,
       questions: request.questions,
       resolve,
       reject,
