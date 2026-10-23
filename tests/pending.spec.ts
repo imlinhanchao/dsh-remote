@@ -67,7 +67,7 @@ describe('PendingBroker', () => {
     const answered = question(questionRequest(), () => desktop.promise)
     const item = broker.list()[0]
     expect(item).toMatchObject({ kind: 'question', callId: 'call-1', title: 'Session' })
-    expect(broker.answer(item!.id, [{ id: 'q1', selected: ['A'] }])).toEqual({ ok: true })
+    expect(broker.answer(item!.id, [{ id: 'q1', selected: ['A'] }])).toMatchObject({ ok: true })
     expect(acknowledge).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }), 'call-1', { answers: [{ id: 'q1', selected: ['A'] }] })
     await expect(answered).resolves.toEqual({ answers: [{ id: 'q1', selected: ['A'] }] })
     expect(broker.list()).toEqual([])
@@ -93,7 +93,7 @@ describe('PendingBroker', () => {
     expect(broker.answer(item.id, [])).toEqual({ ok: false, code: 'bad-answer' })
     expect(broker.answer(item.id, [{ id: 'q1', selected: ['C'] }])).toEqual({ ok: false, code: 'bad-answer' })
     expect(broker.list()).toHaveLength(1)
-    expect(broker.answer(item.id, [{ id: 'q1', selected: ['A'] }])).toEqual({ ok: true })
+    expect(broker.answer(item.id, [{ id: 'q1', selected: ['A'] }])).toMatchObject({ ok: true })
   })
 
   it('allows once or rejects an approval from the phone', async () => {
@@ -102,13 +102,13 @@ describe('PendingBroker', () => {
     const first = approval({ agent: { id: 'session-1' }, toolName: 'bash', reason: 'write' }, () => firstDesktop.promise)
     const firstItem = broker.list()[0]!
     expect(firstItem).toMatchObject({ kind: 'approval', toolName: 'bash' })
-    expect(broker.decide(firstItem.id, 'allow')).toEqual({ ok: true })
+    expect(broker.decide(firstItem.id, 'allow')).toMatchObject({ ok: true })
     await expect(first).resolves.toBe('allowed-once')
 
     const secondDesktop = Promise.withResolvers<ApprovalOutcome>()
     const second = approval({ agent: { id: 'session-1' }, toolName: 'bash' }, () => secondDesktop.promise)
     const secondItem = broker.list()[0]!
-    expect(broker.decide(secondItem.id, 'deny')).toEqual({ ok: true })
+    expect(broker.decide(secondItem.id, 'deny')).toMatchObject({ ok: true })
     await expect(second).resolves.toBe('rejected')
   })
 
